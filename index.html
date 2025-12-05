@@ -4,13 +4,14 @@
 <head>
     <title>Ottawa FSA Survey Map</title>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 
     <!-- Leaflet CSS -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
         integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
 
     <style>
+        /* Prevent scrolling on mobile to keep app "app-like" */
         body,
         html {
             margin: 0;
@@ -20,46 +21,95 @@
             overflow: hidden;
         }
 
-        /* The Map Container */
         #map {
             height: 100%;
             width: 100%;
             float: right;
         }
 
-        /* --- NEW: The Sidebar Input Panel --- */
+        /* --- SIDEBAR STYLING --- */
         #sidebar {
             position: absolute;
             top: 20px;
             left: 20px;
             width: 300px;
-            height: calc(100% - 40px);
+            /* Ensure it fits on small mobile screens without going off-edge */
+            max-width: calc(100% - 40px);
+
+            transition: all 0.3s ease-in-out;
             background: white;
-            z-index: 1000;
-            /* Sit on top of the map */
-            padding: 20px;
+
+            /* KEY FIX: 2000 is higher than Leaflet controls (which are 1000) */
+            z-index: 2000;
+
+            padding: 15px;
             box-shadow: 0 0 20px rgba(0, 0, 0, 0.3);
             border-radius: 8px;
             display: flex;
             flex-direction: column;
             box-sizing: border-box;
+            max-height: calc(100% - 40px);
+        }
+
+        #sidebar.minimized {
+            height: 60px;
+            width: 200px;
+            /* Shrinks horizontally too */
+            overflow: hidden;
+        }
+
+        .sidebar-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+            min-height: 30px;
         }
 
         h2 {
-            margin-top: 0;
+            margin: 0;
             font-size: 1.2rem;
             color: #333;
+            white-space: nowrap;
+        }
+
+        #toggleBtn {
+            background: transparent;
+            border: none;
+            font-size: 1.5rem;
+            color: #555;
+            cursor: pointer;
+            line-height: 1;
+            padding: 0 5px;
+        }
+
+        #toggleBtn:hover {
+            color: #000;
+        }
+
+        #sidebar-content {
+            display: flex;
+            flex-direction: column;
+            flex-grow: 1;
+            opacity: 1;
+            transition: opacity 0.2s;
+        }
+
+        #sidebar.minimized #sidebar-content {
+            opacity: 0;
+            pointer-events: none;
         }
 
         p {
             font-size: 0.9rem;
             color: #666;
             margin-bottom: 10px;
+            margin-top: 0;
         }
 
         textarea {
             flex-grow: 1;
-            /* Fill remaining height */
+            min-height: 150px;
             width: 100%;
             resize: none;
             padding: 10px;
@@ -70,10 +120,9 @@
             margin-bottom: 10px;
         }
 
-        button {
+        .action-btn {
             padding: 12px;
             background-color: #084594;
-            /* Dark Blue */
             color: white;
             border: none;
             border-radius: 4px;
@@ -82,7 +131,7 @@
             font-weight: bold;
         }
 
-        button:hover {
+        .action-btn:hover {
             background-color: #06326e;
         }
 
@@ -95,28 +144,15 @@
             border-radius: 4px;
         }
 
-        /* Leaflet Controls (Legend/Info) */
-        .info {
-            padding: 10px;
-            background: white;
+        /* Leaflet Controls */
+        .info,
+        .legend {
             background: rgba(255, 255, 255, 0.9);
             box-shadow: 0 0 15px rgba(0, 0, 0, 0.2);
             border-radius: 5px;
-            min-width: 150px;
-        }
-
-        .info h4 {
-            margin: 0 0 5px;
-            color: #777;
-        }
-
-        .legend {
-            line-height: 18px;
-            color: #555;
-            background: white;
             padding: 10px;
-            border-radius: 5px;
-            box-shadow: 0 0 15px rgba(0, 0, 0, 0.2);
+            margin-top: 10px !important;
+            margin-right: 10px !important;
         }
 
         .legend i {
@@ -131,96 +167,93 @@
 
 <body>
 
-    <!-- 1. The Input Sidebar -->
+    <!-- SIDEBAR -->
     <div id="sidebar">
-        <h2>Data Input</h2>
-        <p>Paste your list of FSAs below (one per line):</p>
-        <textarea id="fsaInput" placeholder="K1P&#10;K1P&#10;K2A&#10;..."></textarea>
-        <button onclick="parseAndMap()">Update Map</button>
-        <div id="stats">Ready to map.</div>
+        <div class="sidebar-header">
+            <h2>Data Input</h2>
+            <button id="toggleBtn" onclick="toggleSidebar()">&minus;</button>
+        </div>
+        <div id="sidebar-content">
+            <p>Paste your list of FSAs below:</p>
+            <textarea id="fsaInput" placeholder="K1P&#10;K1P&#10;K2A&#10;..."></textarea>
+            <button class="action-btn" onclick="parseAndMap()">Update Map</button>
+            <div id="stats">Ready to map.</div>
+        </div>
     </div>
 
-    <!-- 2. The Map -->
+    <!-- MAP -->
     <div id="map"></div>
 
-    <!-- Leaflet JS -->
+    <!-- SCRIPTS -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
         integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 
     <script>
-        // --- GLOBAL VARIABLES ---
         var map, geojsonLayer;
-        var surveyCounts = {}; // Stores the processed counts (e.g., {"K1P": 5})
+        var surveyCounts = {};
 
-        // --- 1. SETUP MAP ---
-        map = L.map('map').setView([45.4215, -75.6972], 10);
+        // --- TOGGLE SIDEBAR LOGIC ---
+        function toggleSidebar() {
+            var sidebar = document.getElementById('sidebar');
+            var btn = document.getElementById('toggleBtn');
+            sidebar.classList.toggle('minimized');
+            if (sidebar.classList.contains('minimized')) {
+                btn.innerHTML = "+";
+            } else {
+                btn.innerHTML = "&minus;";
+            }
+        }
+
+        // --- MAP SETUP ---
+
+        // Disable default zoom control so we can move it
+        map = L.map('map', { zoomControl: false }).setView([45.4215, -75.6972], 10);
+
+        // Add zoom control to TOP RIGHT
+        L.control.zoom({
+            position: 'topright'
+        }).addTo(map);
 
         L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
             attribution: '&copy; OpenStreetMap &copy; CARTO',
             maxZoom: 19
         }).addTo(map);
 
-        // --- 2. LOAD BOUNDARIES (GeoJSON) ---
-        // Note: We only load the GeoJSON once. We don't load a separate data file anymore.
         fetch('ottawa_boundaries.geojson')
             .then(response => response.json())
             .then(data => {
-
-                // Initialize layer with 0 counts (transparent)
                 geojsonLayer = L.geoJson(data, {
                     style: styleFeature,
                     onEachFeature: onEachFeature
                 }).addTo(map);
-
             })
-            .catch(err => alert("Error loading GeoJSON. Make sure 'ottawa_boundaries.geojson' is in the folder!"));
+            .catch(err => alert("Error loading GeoJSON file."));
 
-
-        // --- 3. DATA PROCESSING LOGIC ---
-
+        // --- DATA LOGIC ---
         function parseAndMap() {
-            // Get text from box
             var rawText = document.getElementById('fsaInput').value;
-
-            // Split by new line
             var lines = rawText.split(/\r?\n/);
-
-            // Reset counts
             surveyCounts = {};
             var totalProcessed = 0;
 
-            // Loop through every line
             lines.forEach(line => {
-                // Clean the string: remove spaces, convert to Uppercase
                 var fsa = line.trim().toUpperCase();
-
-                // Basic validation: must be 3 chars long (e.g., "K1P")
                 if (fsa.length === 3) {
-                    if (surveyCounts[fsa]) {
-                        surveyCounts[fsa]++; // Increment if exists
-                    } else {
-                        surveyCounts[fsa] = 1; // Start at 1
-                    }
+                    surveyCounts[fsa] = (surveyCounts[fsa] || 0) + 1;
                     totalProcessed++;
                 }
             });
 
-            // Update stats box
             var uniqueFSAs = Object.keys(surveyCounts).length;
             document.getElementById('stats').innerHTML =
                 `Processed <b>${totalProcessed}</b> entries.<br>Found <b>${uniqueFSAs}</b> unique FSAs.`;
 
-            // REPAINT THE MAP
             if (geojsonLayer) {
-                geojsonLayer.eachLayer(function (layer) {
-                    // Re-apply the style function to every shape
-                    layer.setStyle(styleFeature(layer.feature));
-                });
+                geojsonLayer.eachLayer(layer => layer.setStyle(styleFeature(layer.feature)));
             }
         }
 
-        // --- 4. STYLING LOGIC ---
-
+        // --- STYLING ---
         function getColor(d) {
             return d > 100 ? '#084594' :
                 d > 50 ? '#2171b5' :
@@ -232,24 +265,19 @@
         }
 
         function styleFeature(feature) {
-            // Get the FSA from the map shape
             var fsaCode = feature.properties.CFSAUID;
-
-            // Check our processed counts. If undefined, use 0.
             var count = surveyCounts[fsaCode] || 0;
-
             return {
                 fillColor: getColor(count),
                 weight: 1,
                 opacity: 1,
-                color: '#999', // Light grey border
+                color: '#999',
                 dashArray: '3',
                 fillOpacity: 0.7
             };
         }
 
-        // --- 5. INTERACTIVITY (Hover & Legend) ---
-
+        // --- INTERACTIVITY ---
         function highlightFeature(e) {
             var layer = e.target;
             layer.setStyle({ weight: 3, color: '#666', dashArray: '', fillOpacity: 0.9 });
@@ -258,20 +286,16 @@
         }
 
         function resetHighlight(e) {
-            // Reset to the calculated style
             geojsonLayer.resetStyle(e.target);
             info.update();
         }
 
         function onEachFeature(feature, layer) {
-            layer.on({
-                mouseover: highlightFeature,
-                mouseout: resetHighlight,
-            });
+            layer.on({ mouseover: highlightFeature, mouseout: resetHighlight });
         }
 
         // Info Box (Top Right)
-        var info = L.control();
+        var info = L.control({ position: 'topright' });
         info.onAdd = function (map) {
             this._div = L.DomUtil.create('div', 'info');
             this.update();
@@ -279,21 +303,17 @@
         };
         info.update = function (props) {
             if (props) {
-                var fsa = props.CFSAUID;
-                var count = surveyCounts[fsa] || 0;
-                this._div.innerHTML = '<h4>Results</h4><b>' + fsa + '</b><br />' + count + ' respondents';
+                var count = surveyCounts[props.CFSAUID] || 0;
+                this._div.innerHTML = '<h4>Results</h4><b>' + props.CFSAUID + '</b><br />' + count + ' respondents';
             } else {
                 this._div.innerHTML = '<h4>Results</h4>Hover over area';
             }
         };
         info.addTo(map);
 
-        // Legend (Bottom Right)
         var legend = L.control({ position: 'bottomright' });
         legend.onAdd = function (map) {
-            var div = L.DomUtil.create('div', 'info legend'),
-                grades = [0, 5, 10, 20, 50, 100];
-
+            var div = L.DomUtil.create('div', 'info legend'), grades = [0, 5, 10, 20, 50, 100];
             div.innerHTML += '<strong>Count</strong><br>';
             for (var i = 0; i < grades.length; i++) {
                 div.innerHTML +=
