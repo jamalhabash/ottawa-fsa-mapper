@@ -11,7 +11,6 @@
         integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
 
     <style>
-        /* Prevent scrolling on mobile to keep app "app-like" */
         body,
         html {
             margin: 0;
@@ -33,15 +32,11 @@
             top: 20px;
             left: 20px;
             width: 300px;
-            /* Ensure it fits on small mobile screens without going off-edge */
             max-width: calc(100% - 40px);
-
             transition: all 0.3s ease-in-out;
             background: white;
-
-            /* KEY FIX: 2000 is higher than Leaflet controls (which are 1000) */
             z-index: 2000;
-
+            /* Sit on top of everything */
             padding: 15px;
             box-shadow: 0 0 20px rgba(0, 0, 0, 0.3);
             border-radius: 8px;
@@ -54,7 +49,6 @@
         #sidebar.minimized {
             height: 60px;
             width: 200px;
-            /* Shrinks horizontally too */
             overflow: hidden;
         }
 
@@ -191,6 +185,7 @@
     <script>
         var map, geojsonLayer;
         var surveyCounts = {};
+        var maxCount = 0; // NEW: Track the highest number found
 
         // --- TOGGLE SIDEBAR LOGIC ---
         function toggleSidebar() {
@@ -205,14 +200,8 @@
         }
 
         // --- MAP SETUP ---
-
-        // Disable default zoom control so we can move it
         map = L.map('map', { zoomControl: false }).setView([45.4215, -75.6972], 10);
-
-        // Add zoom control to TOP RIGHT
-        L.control.zoom({
-            position: 'topright'
-        }).addTo(map);
+        L.control.zoom({ position: 'topright' }).addTo(map);
 
         L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
             attribution: '&copy; OpenStreetMap &copy; CARTO',
@@ -235,7 +224,9 @@
             var lines = rawText.split(/\r?\n/);
             surveyCounts = {};
             var totalProcessed = 0;
+            maxCount = 0; // Reset max
 
+            // 1. Count the FSAs
             lines.forEach(line => {
                 var fsa = line.trim().toUpperCase();
                 if (fsa.length === 3) {
@@ -244,24 +235,44 @@
                 }
             });
 
+            // 2. Find the Maximum value (e.g., if K1P is 50, maxCount = 50)
+            var values = Object.values(surveyCounts);
+            if (values.length > 0) {
+                maxCount = Math.max(...values);
+            }
+
+            // 3. Update Text Stats
             var uniqueFSAs = Object.keys(surveyCounts).length;
             document.getElementById('stats').innerHTML =
-                `Processed <b>${totalProcessed}</b> entries.<br>Found <b>${uniqueFSAs}</b> unique FSAs.`;
+                `Processed <b>${totalProcessed}</b> entries.<br>Max Count: <b>${maxCount}</b>`;
 
+            // 4. Redraw Map
             if (geojsonLayer) {
                 geojsonLayer.eachLayer(layer => layer.setStyle(styleFeature(layer.feature)));
             }
+
+            // 5. Update Legend
+            updateLegend();
         }
 
-        // --- STYLING ---
+        // --- DYNAMIC COLORING ---
+        // Colors from Lightest to Darkest
+        var colorScale = ['#eff3ff', '#bdd7e7', '#6baed6', '#3182bd', '#08519c'];
+
         function getColor(d) {
-            return d > 100 ? '#084594' :
-                d > 50 ? '#2171b5' :
-                    d > 20 ? '#4292c6' :
-                        d > 10 ? '#6baed6' :
-                            d > 5 ? '#9ecae1' :
-                                d > 0 ? '#c6dbef' :
-                                    'transparent';
+            // Protect against division by zero
+            if (maxCount === 0) return 'transparent';
+            if (d === 0) return 'transparent';
+
+            // Calculate percentage (0.0 to 1.0)
+            var percent = d / maxCount;
+
+            // Assign color based on percentage bucket
+            if (percent > 0.8) return colorScale[4];
+            if (percent > 0.6) return colorScale[3];
+            if (percent > 0.4) return colorScale[2];
+            if (percent > 0.2) return colorScale[1];
+            return colorScale[0];
         }
 
         function styleFeature(feature) {
@@ -294,7 +305,6 @@
             layer.on({ mouseover: highlightFeature, mouseout: resetHighlight });
         }
 
-        // Info Box (Top Right)
         var info = L.control({ position: 'topright' });
         info.onAdd = function (map) {
             this._div = L.DomUtil.create('div', 'info');
@@ -311,18 +321,58 @@
         };
         info.addTo(map);
 
+        // --- DYNAMIC LEGEND ---
         var legend = L.control({ position: 'bottomright' });
+
         legend.onAdd = function (map) {
-            var div = L.DomUtil.create('div', 'info legend'), grades = [0, 5, 10, 20, 50, 100];
-            div.innerHTML += '<strong>Count</strong><br>';
-            for (var i = 0; i < grades.length; i++) {
-                div.innerHTML +=
-                    '<i style="background:' + getColor(grades[i] + 1) + '"></i> ' +
-                    grades[i] + (grades[i + 1] ? '&ndash;' + grades[i + 1] + '<br>' : '+');
-            }
+            var div = L.DomUtil.create('div', 'info legend');
+            // We create a container span we can target later
+            div.innerHTML = '<div id="legend-content"><strong>Count</strong><br>No Data</div>';
             return div;
         };
         legend.addTo(map);
+
+        function updateLegend() {
+            var container = document.getElementById('legend-content');
+            if (maxCount === 0) {
+                container.innerHTML = '<strong>Count</strong><br>No Data';
+                return;
+            }
+
+            // Create 5 buckets based on the maxCount
+            // Example: If max is 100, grades are 0, 20, 40, 60, 80
+            var grades = [
+                0,
+                Math.ceil(maxCount * 0.2),
+                Math.ceil(maxCount * 0.4),
+                Math.ceil(maxCount * 0.6),
+                Math.ceil(maxCount * 0.8)
+            ];
+
+            // Remove duplicates (in case maxCount is small, like 3)
+            grades = [...new Set(grades)];
+
+            var html = '<strong>Count</strong><br>';
+
+            // Loop through grades to generate labels
+            for (var i = 0; i < grades.length; i++) {
+                // Determine the "Next" grade for the label (e.g. 0-20)
+                var current = grades[i];
+                var next = grades[i + 1];
+
+                // Get color for this bucket
+                // We fake a value (current + 1) to ensure we get the right color from our getColor logic
+                var color = getColor(current + (maxCount * 0.05));
+
+                // Label string
+                var label = next ?
+                    current + '&ndash;' + next :
+                    current + '+';
+
+                html += '<i style="background:' + color + '"></i> ' + label + '<br>';
+            }
+            container.innerHTML = html;
+        }
 
     </script>
 </body>
